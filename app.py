@@ -62,11 +62,14 @@ def grade_label(g: str) -> str:
 
 def normalize_to_set1(df_raw):
     df = df_raw.copy()
-    numeric_cols = [c for c in df.columns if c != "Set"]
-    # cast to float64 (numpy-backed) so arithmetic works on any pandas/pyarrow version
-    df[numeric_cols] = df[numeric_cols].astype("float64")
-    reference = df[numeric_cols].iloc[0].to_numpy()
-    df[numeric_cols] = df[numeric_cols].values - reference
+    # Coerce every non-Set column to float64; columns that can't convert become NaN
+    candidate_cols = [c for c in df.columns if c != "Set"]
+    for c in candidate_cols:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    # Keep only columns that actually contain numeric data
+    numeric_cols = [c for c in candidate_cols if pd.api.types.is_numeric_dtype(df[c])]
+    reference = df[numeric_cols].iloc[0].to_numpy(dtype="float64")
+    df[numeric_cols] = df[numeric_cols].to_numpy(dtype="float64") - reference
     return df
 
 
