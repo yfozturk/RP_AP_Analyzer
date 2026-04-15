@@ -423,6 +423,165 @@ def make_quality_plotly(results):
     return fig
 
 
+def make_comparison_bar_plotly(results_a, results_b, label_a, label_b):
+    """Grouped bar chart comparing AP and RP for two datasets."""
+    poses = sorted(set(list(results_a.keys()) + list(results_b.keys())))
+    ap_a = [results_a[p]["AP"] if p in results_a else None for p in poses]
+    ap_b = [results_b[p]["AP"] if p in results_b else None for p in poses]
+    rp_a = [results_a[p]["RP"] if p in results_a else None for p in poses]
+    rp_b = [results_b[p]["RP"] if p in results_b else None for p in poses]
+
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=[
+            f"Doğruluk (AP): {label_a} vs {label_b}",
+            f"Tekrarlanabilirlik (RP): {label_a} vs {label_b}",
+        ],
+    )
+
+    for col_idx, (vals_a, vals_b, metric) in enumerate(
+        [(ap_a, ap_b, "AP"), (rp_a, rp_b, "RP")], start=1
+    ):
+        fig.add_trace(go.Bar(
+            x=poses, y=vals_a,
+            name=f"{metric} — {label_a}",
+            marker_color="#89b4fa",
+            text=[f"{v:.5f}" if v is not None else "" for v in vals_a],
+            textposition="auto",
+            showlegend=(col_idx == 1),
+            legendgroup="a",
+            hovertemplate="%{x}<br>" + metric + f" ({label_a}) = %{{y:.6f}} mm<extra></extra>",
+        ), row=1, col=col_idx)
+
+        fig.add_trace(go.Bar(
+            x=poses, y=vals_b,
+            name=f"{metric} — {label_b}",
+            marker_color="#f38ba8",
+            text=[f"{v:.5f}" if v is not None else "" for v in vals_b],
+            textposition="auto",
+            showlegend=(col_idx == 1),
+            legendgroup="b",
+            hovertemplate="%{x}<br>" + metric + f" ({label_b}) = %{{y:.6f}} mm<extra></extra>",
+        ), row=1, col=col_idx)
+
+        for thr_name, thr_val in THRESHOLDS.items():
+            fig.add_hline(
+                y=thr_val, line_dash="dot",
+                line_color=GRADE_COLORS[thr_name], opacity=0.8,
+                annotation_text=thr_name, annotation_font_size=9,
+                annotation_font_color=GRADE_COLORS[thr_name],
+                row=1, col=col_idx,
+            )
+
+    fig.update_layout(
+        title=f"ISO 9283 Karşılaştırma: {label_a} vs {label_b}",
+        barmode="group", height=450,
+        paper_bgcolor="#1e1e2e", plot_bgcolor="#313244",
+        font=dict(color="#cdd6f4"),
+        legend=dict(bgcolor="#313244"),
+    )
+    fig.update_xaxes(gridcolor="#45475a")
+    fig.update_yaxes(gridcolor="#45475a", title_text="mm")
+    return fig
+
+
+def make_comparison_bullseye_plotly(pid, pose_df_a, res_a, pose_df_b, res_b, label_a, label_b):
+    """Overlaid bullseye showing two datasets on the same pose chart."""
+    A_a = pose_df_a.iloc[:, 0].values
+    B_a = pose_df_a.iloc[:, 1].values
+    A_b = pose_df_b.iloc[:, 0].values
+    B_b = pose_df_b.iloc[:, 1].values
+    ax_names = list(pose_df_a.columns)
+
+    all_r = np.concatenate([
+        np.sqrt(A_a ** 2 + B_a ** 2),
+        np.sqrt(A_b ** 2 + B_b ** 2),
+    ])
+    r_max = max(
+        all_r.max() * 1.45 if len(all_r) > 0 else 0.01,
+        THRESHOLDS["Sinirli"] * 1.6,
+        1e-5,
+    )
+
+    fig = go.Figure()
+
+    for zone, r in [
+        ("Sinirli", THRESHOLDS["Sinirli"]),
+        ("Kabul",   THRESHOLDS["Kabul"]),
+        ("Iyi",     THRESHOLDS["Iyi"]),
+    ]:
+        cx, cy = _circle_xy(0, 0, r)
+        fig.add_trace(go.Scatter(
+            x=np.append(cx, cx[0]), y=np.append(cy, cy[0]),
+            fill="toself", fillcolor=GRADE_COLORS_LIGHT[zone],
+            line=dict(color=GRADE_COLORS[zone], width=1.5, dash="dash"),
+            name=f"{grade_label(zone)} ≤ {r:.2f} mm",
+            hoverinfo="skip", mode="lines",
+        ))
+
+    fig.add_trace(go.Scatter(
+        x=A_a, y=B_a, mode="markers+lines",
+        marker=dict(size=9, color="#89b4fa", symbol="circle",
+                    line=dict(color="white", width=1)),
+        line=dict(color="rgba(137,180,250,0.3)", width=1),
+        name=label_a,
+        text=[
+            f"{label_a} Set {i+1}<br>Δ{ax_names[0]}={a:.5f}<br>Δ{ax_names[1]}={b:.5f}"
+            for i, (a, b) in enumerate(zip(A_a, B_a))
+        ],
+        hovertemplate="%{text}<extra></extra>",
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=A_b, y=B_b, mode="markers+lines",
+        marker=dict(size=9, color="#f38ba8", symbol="diamond",
+                    line=dict(color="white", width=1)),
+        line=dict(color="rgba(243,139,168,0.3)", width=1),
+        name=label_b,
+        text=[
+            f"{label_b} Set {i+1}<br>Δ{ax_names[0]}={a:.5f}<br>Δ{ax_names[1]}={b:.5f}"
+            for i, (a, b) in enumerate(zip(A_b, B_b))
+        ],
+        hovertemplate="%{text}<extra></extra>",
+    ))
+
+    for mA, mB, RP, color, lbl in [
+        (res_a["mean_A"], res_a["mean_B"], res_a["RP"], "#89b4fa", label_a),
+        (res_b["mean_A"], res_b["mean_B"], res_b["RP"], "#f38ba8", label_b),
+    ]:
+        cx, cy = _circle_xy(mA, mB, RP)
+        fig.add_trace(go.Scatter(
+            x=np.append(cx, cx[0]), y=np.append(cy, cy[0]),
+            mode="lines",
+            line=dict(color=color, width=2, dash="dot"),
+            name=f"RP ({lbl}) = {RP:.5f} mm",
+            hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=[mA], y=[mB], mode="markers",
+            marker=dict(symbol="cross", size=12, color=color),
+            name=f"Ort. ({lbl})",
+            hovertemplate=(
+                f"{lbl} ort.: Δ{ax_names[0]}={mA:.5f}, Δ{ax_names[1]}={mB:.5f}<extra></extra>"
+            ),
+        ))
+
+    fig.update_layout(
+        title=f"{pid} — Bullseye Karşılaştırma: {label_a} vs {label_b}",
+        xaxis=dict(title=f"Δ{ax_names[0]} (mm)", scaleanchor="y",
+                   gridcolor="#45475a", zeroline=True, zerolinecolor="#585b70"),
+        yaxis=dict(title=f"Δ{ax_names[1]} (mm)",
+                   gridcolor="#45475a", zeroline=True, zerolinecolor="#585b70"),
+        xaxis_range=[-r_max, r_max],
+        yaxis_range=[-r_max, r_max],
+        height=520,
+        paper_bgcolor="#1e1e2e", plot_bgcolor="#313244",
+        font=dict(color="#cdd6f4"),
+        legend=dict(bgcolor="#313244", font=dict(size=10)),
+    )
+    return fig
+
+
 # ─────────────────────────────────────────────
 #  Streamlit Page Setup
 # ─────────────────────────────────────────────
@@ -594,7 +753,7 @@ with st.sidebar:
     st.header("⚙️ Veri Girişi")
     input_mode = st.radio(
         "Yöntem:",
-        ["📁 CSV Yükle", "✏️ Manuel Giriş"],
+        ["📁 CSV Yükle", "✏️ Manuel Giriş", "🔀 Karşılaştırma"],
         label_visibility="collapsed",
     )
 
@@ -621,6 +780,12 @@ if "df_raw" not in st.session_state:
     st.session_state.df_raw = None
 if "backup_csv" not in st.session_state:
     st.session_state.backup_csv = None  # son manuel verinin CSV yedeği
+if "df_raw_b" not in st.session_state:
+    st.session_state.df_raw_b = None
+if "label_a" not in st.session_state:
+    st.session_state.label_a = "Veri Seti A"
+if "label_b" not in st.session_state:
+    st.session_state.label_b = "Veri Seti B"
 
 # ─────────────────────────────────────────────
 #  Data Input
@@ -663,7 +828,7 @@ Birden fazla pose için: `P2_A, P2_B, P2_C` ekleyin.
             "text/csv",
         )
 
-else:  # Manuel Giriş
+elif input_mode == "✏️ Manuel Giriş":
     st.subheader("✏️ Manuel Veri Girişi")
     c1, c2 = st.columns(2)
     with c1:
@@ -730,13 +895,158 @@ else:  # Manuel Giriş
             help="Net kesilirse veya sayfa kapanırsa bu CSV'yi tekrar yükleyebilirsin",
         )
 
+
+else:  # Karşılaştırma modu
+    st.subheader("🔀 İki Veri Seti Karşılaştırma")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("### Veri Seti A")
+        st.session_state.label_a = st.text_input(
+            "İsim (A):", value=st.session_state.label_a, key="label_a_input"
+        )
+        up_a = st.file_uploader(
+            "CSV A", type=["csv"], key="comp_upload_a",
+            label_visibility="collapsed",
+        )
+        if up_a:
+            try:
+                st.session_state.df_raw = pd.read_csv(up_a)
+                st.success(f"✅ A yüklendi: **{up_a.name}** | {len(st.session_state.df_raw)} set")
+            except Exception as e:
+                st.error(f"❌ {e}")
+        elif st.session_state.df_raw is not None:
+            st.info("✅ A veri seti hazır")
+    with col_b:
+        st.markdown("### Veri Seti B")
+        st.session_state.label_b = st.text_input(
+            "İsim (B):", value=st.session_state.label_b, key="label_b_input"
+        )
+        up_b = st.file_uploader(
+            "CSV B", type=["csv"], key="comp_upload_b",
+            label_visibility="collapsed",
+        )
+        if up_b:
+            try:
+                st.session_state.df_raw_b = pd.read_csv(up_b)
+                st.success(f"✅ B yüklendi: **{up_b.name}** | {len(st.session_state.df_raw_b)} set")
+            except Exception as e:
+                st.error(f"❌ {e}")
+        elif st.session_state.df_raw_b is not None:
+            st.info("✅ B veri seti hazır")
+
 # ─────────────────────────────────────────────
 #  Analysis & Results
 # ─────────────────────────────────────────────
 
-df_raw = st.session_state.df_raw
+df_raw   = st.session_state.df_raw
+df_raw_b = st.session_state.get("df_raw_b")
 
-if df_raw is not None:
+if input_mode == "🔀 Karşılaştırma":
+    _la  = st.session_state.get("label_a", "Veri Seti A")
+    _lb  = st.session_state.get("label_b", "Veri Seti B")
+    _raw_b = st.session_state.get("df_raw_b")
+    if df_raw is not None and _raw_b is not None:
+        try:
+            df_norm_a   = normalize_to_set1(df_raw)
+            df_norm_b   = normalize_to_set1(_raw_b)
+            pose_data_a = parse_poses(df_norm_a)
+            pose_data_b = parse_poses(df_norm_b)
+            if not pose_data_a or not pose_data_b:
+                st.error("❌ Geçerli pose bulunamadı. Kolon formatını kontrol edin.")
+                st.stop()
+
+            results_a, results_b = {}, {}
+            for pid, pose_df in pose_data_a.items():
+                r = compute_rp(pose_df); r["AP"] = compute_ap(pose_df); results_a[pid] = r
+            for pid, pose_df in pose_data_b.items():
+                r = compute_rp(pose_df); r["AP"] = compute_ap(pose_df); results_b[pid] = r
+
+            all_poses = sorted(set(list(results_a.keys()) + list(results_b.keys())))
+            st.divider()
+            st.subheader(f"📊 Karşılaştırma: {_la} vs {_lb}")
+            for pname in all_poses:
+                with st.expander(f"📍 {pname}", expanded=True):
+                    c1, c2, c3, c4 = st.columns(4)
+                    r_a = results_a.get(pname)
+                    r_b = results_b.get(pname)
+                    with c1:
+                        v = r_a["AP"] if r_a else None
+                        st.metric(f"AP — {_la}", f"{v:.5f} mm" if v is not None else "—",
+                                  grade_label(rate_quality(v)) if v is not None else "")
+                    with c2:
+                        v = r_b["AP"] if r_b else None
+                        st.metric(f"AP — {_lb}", f"{v:.5f} mm" if v is not None else "—",
+                                  grade_label(rate_quality(v)) if v is not None else "")
+                    with c3:
+                        v = r_a["RP"] if r_a else None
+                        st.metric(f"RP — {_la}", f"{v:.5f} mm" if v is not None else "—",
+                                  grade_label(rate_quality(v)) if v is not None else "")
+                    with c4:
+                        v = r_b["RP"] if r_b else None
+                        st.metric(f"RP — {_lb}", f"{v:.5f} mm" if v is not None else "—",
+                                  grade_label(rate_quality(v)) if v is not None else "")
+
+            cmp_tab1, cmp_tab2, cmp_tab3 = st.tabs([
+                "📊 AP & RP Karşılaştırma",
+                "🎯 Bullseye Karşılaştırma",
+                "📋 Delta Tablosu",
+            ])
+            with cmp_tab1:
+                st.plotly_chart(
+                    make_comparison_bar_plotly(results_a, results_b, _la, _lb),
+                    use_container_width=True,
+                )
+            with cmp_tab2:
+                common_poses = sorted(set(pose_data_a.keys()) & set(pose_data_b.keys()))
+                if not common_poses:
+                    st.warning("İki veri setinde eşleşen pose bulunamadı.")
+                else:
+                    for pid in common_poses:
+                        st.plotly_chart(
+                            make_comparison_bullseye_plotly(
+                                pid,
+                                pose_data_a[pid], results_a[pid],
+                                pose_data_b[pid], results_b[pid],
+                                _la, _lb,
+                            ),
+                            use_container_width=True,
+                        )
+                only_a = sorted(set(pose_data_a.keys()) - set(pose_data_b.keys()))
+                only_b = sorted(set(pose_data_b.keys()) - set(pose_data_a.keys()))
+                if only_a:
+                    st.info(f"Sadece {_la}’da bulunan pose’lar: {', '.join(only_a)}")
+                if only_b:
+                    st.info(f"Sadece {_lb}’de bulunan pose’lar: {', '.join(only_b)}")
+            with cmp_tab3:
+                delta_rows = []
+                for pname in all_poses:
+                    r_a = results_a.get(pname)
+                    r_b = results_b.get(pname)
+                    ap_a = r_a["AP"] if r_a else None
+                    ap_b = r_b["AP"] if r_b else None
+                    rp_a = r_a["RP"] if r_a else None
+                    rp_b = r_b["RP"] if r_b else None
+                    delta_rows.append({
+                        "Pose":             pname,
+                        f"AP {_la} (mm)":   round(ap_a, 6) if ap_a is not None else None,
+                        f"AP {_lb} (mm)":   round(ap_b, 6) if ap_b is not None else None,
+                        "ΔAP (B−A) mm":  round(ap_b - ap_a, 6) if (ap_a is not None and ap_b is not None) else None,
+                        f"RP {_la} (mm)":   round(rp_a, 6) if rp_a is not None else None,
+                        f"RP {_lb} (mm)":   round(rp_b, 6) if rp_b is not None else None,
+                        "ΔRP (B−A) mm":  round(rp_b - rp_a, 6) if (rp_a is not None and rp_b is not None) else None,
+                    })
+                st.dataframe(pd.DataFrame(delta_rows), use_container_width=True)
+                st.caption("Δ < 0 → B daha iyi  |  Δ > 0 → A daha iyi")
+        except Exception as e:
+            st.error(f"❌ Karşılaştırma hatası: {e}")
+            st.exception(e)
+    elif df_raw is None and _raw_b is None:
+        st.info("👈 Sol panelden **iki CSV dosyası** yükleyin.")
+    else:
+        missing = "B" if df_raw is not None else "A"
+        st.warning(f"⚠️ Veri Seti **{missing}** henüz yüklenmedi — yukarıdan CSV yükleyin.")
+
+elif df_raw is not None:
     try:
         df_norm   = normalize_to_set1(df_raw)
         pose_data = parse_poses(df_norm)
@@ -917,6 +1227,12 @@ else:
 2. Set ve pose sayısını belirle
 3. Tabloya değerleri gir (telefondan da girebilirsin)
 4. **Analiz Et** butonuna bas
+
+### 🔀 Karşılaştırma Yöntemi
+1. Sol panelden **Karşılaştırma** seçeneğini seç
+2. İki ayrı CSV dosyası yükle (A ve B)
+3. Her veri seti için bir isim ver (örn: "Kalibrasyon Öncesi", "Kalibrasyon Sonrası")
+4. AP, RP karşılaştırma grafikleri ve delta tablosu otomatik çıkar
 
 ### CSV Format
 ```
