@@ -1188,7 +1188,7 @@ elif df_raw is not None:
 
         import datetime as _dt
         _ts2 = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-        dl_col1, dl_col2 = st.columns(2)
+        dl_col1, dl_col2, dl_col3 = st.columns(3)
         with dl_col1:
             st.download_button(
                 label="⬇️ Excel Raporu İndir (.xlsx)",
@@ -1205,6 +1205,19 @@ elif df_raw is not None:
                 mime="text/csv",
                 use_container_width=True,
                 help="Bu CSV'yi daha sonra tekrar yükleyerek analizi sıfırdan yapabilirsin",
+            )
+        with dl_col3:
+            _html_bytes = generate_html_report(
+                df_raw, df_norm, pose_data, results,
+                label=f"{len(pose_data)} pose, {len(df_raw)} set",
+            ).encode("utf-8")
+            st.download_button(
+                label="📄 HTML Rapor İndir",
+                data=_html_bytes,
+                file_name=f"iso9283_rapor_{_ts2}.html",
+                mime="text/html",
+                use_container_width=True,
+                help="Tüm grafikler ve tablolar dahil tam rapor. Tarayıcıdan PDF olarak da yazdırabilirsin.",
             )
 
     except Exception as e:

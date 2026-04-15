@@ -564,6 +564,8 @@ class ISO9283App(tk.Tk):
                   bg="#f38ba8", **bb).pack(side="left", padx=5)
         tk.Button(top, text="Export Excel", command=self.export_excel,
                   bg="#fab387", **bb).pack(side="left", padx=5)
+        tk.Button(top, text="📄 PDF Rapor", command=self._export_pdf_report,
+                  bg="#cba6f7", **bb).pack(side="left", padx=5)
 
         self.status_var = tk.StringVar(value="Dosya yuklenmedi.")
         tk.Label(top, textvariable=self.status_var,
@@ -1118,6 +1120,166 @@ class ISO9283App(tk.Tk):
             messagebox.showerror("Hata", f"Analiz yapilamadi:\n{e}")
 
     # ── Treeview fill ──────────────────────────
+    # ── PDF Rapor ────────────────────────────────
+    def _export_pdf_report(self):
+        if self.results is None:
+            messagebox.showwarning("Sonuç Yok", "Once Run Analysis yapın.")
+            return
+        from matplotlib.backends.backend_pdf import PdfPages
+        ts   = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf")],
+            initialfile=f"iso9283_rapor_{ts}.pdf",
+            title="PDF Raporu Kaydet",
+        )
+        if not path:
+            return
+        try:
+            with PdfPages(path) as pdf:
+                # ─ Sayfa 1: Başlık + Özet Tablosu ─────────────────
+                fig, ax = plt.subplots(figsize=(11.7, 8.3), facecolor="#1e1e2e")
+                ax.set_facecolor("#1e1e2e")
+                ax.axis("off")
+
+                ax.text(0.5, 0.93,
+                        "ISO 9283 — RP & AP Analiz Raporu",
+                        ha="center", va="center", fontsize=22,
+                        fontweight="bold", color="#cba6f7",
+                        transform=ax.transAxes)
+                ax.text(0.5, 0.86,
+                        f"Tarih: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}   |   "
+                        f"{len(self.df_raw)} set   |   {len(self.results)} pose",
+                        ha="center", va="center", fontsize=11,
+                        color="#a6adc8", transform=ax.transAxes)
+
+                # summary table
+                col_labels = ["Pose", "AP (mm)", "AP Kalite", "RP (mm)", "RP Kalite",
+                              "l-bar (mm)", "S_l (mm)"]
+                rows = []
+                for pid, res in self.results.items():
+                    rows.append([
+                        pid,
+                        f"{res['AP']:.6f}",
+                        grade_label(rate_quality(res['AP'])),
+                        f"{res['RP']:.6f}",
+                        grade_label(rate_quality(res['RP'])),
+                        f"{res['l_bar']:.6f}",
+                        f"{res['S_l']:.6f}",
+                    ])
+
+                tbl = ax.table(
+                    cellText=rows, colLabels=col_labels,
+                    loc="center", cellLoc="center",
+                    bbox=[0.05, 0.25, 0.90, 0.52],
+                )
+                tbl.auto_set_font_size(False)
+                tbl.set_fontsize(10)
+                for (r, c), cell in tbl.get_celld().items():
+                    if r == 0:
+                        cell.set_facecolor("#45475a")
+                        cell.set_text_props(color="#cba6f7", fontweight="bold")
+                    else:
+                        cell.set_facecolor("#313244")
+                        # colour-code quality cells
+                        if c in (2, 4):
+                            val_str = rows[r - 1][c - 1]
+                            met     = rows[r - 1][c - (1 if c == 2 else 3)]
+                            try:
+                                g = rate_quality(float(met))
+                                cell.set_facecolor(GRADE_COLORS_LIGHT[g])
+                                cell.set_text_props(color=GRADE_COLORS[g],
+                                                    fontweight="bold")
+                            except Exception:
+                                cell.set_text_props(color="#cdd6f4")
+                        else:
+                            cell.set_text_props(color="#cdd6f4")
+                    cell.set_edgecolor("#585b70")
+
+                # ISO threshold legend at bottom
+                thr_line = (
+                    f"İyi ≤ {THRESHOLDS['Iyi']:.2f} mm   |   "
+                    f"Kabul Edilebilir ≤ {THRESHOLDS['Kabul']:.2f} mm   |   "
+                    f"Sınırlı ≤ {THRESHOLDS['Sinirli']:.2f} mm   |   "
+                    f"Uygun Değil > {THRESHOLDS['Sinirli']:.2f} mm"
+                )
+                ax.text(0.5, 0.17, thr_line,
+                        ha="center", va="center", fontsize=8.5,
+                        color="#585b70", transform=ax.transAxes)
+
+                pdf.savefig(fig, facecolor=fig.get_facecolor())
+                plt.close(fig)
+
+                # ─ Sayfa 2: Bullseye ─────────────────────────
+                fig = make_bullseye_figure(self.pose_data, self.results)
+                pdf.savefig(fig, facecolor=fig.get_facecolor())
+                plt.close(fig)
+
+                # ─ Sayfa 3: Eksen Sapması + L_i ─────────────────
+                fig = make_summary_figure(self.pose_data, self.results)
+                pdf.savefig(fig, facecolor=fig.get_facecolor())
+                plt.close(fig)
+
+                # ─ Sayfa 4: Box Plot ─────────────────────────
+                fig = make_boxplot_figure(self.pose_data)
+                pdf.savefig(fig, facecolor=fig.get_facecolor())
+                plt.close(fig)
+
+                # ─ Sayfa 5: Kalite Özeti ─────────────────────
+                fig = make_quality_figure(self.results)
+                pdf.savefig(fig, facecolor=fig.get_facecolor())
+                plt.close(fig)
+
+                # ─ Sayfa 6: Veri Tabloları ────────────────────
+                ax_rows = []
+                for pid, pose_df in self.pose_data.items():
+                    for ax_n, st in axis_repeatability(pose_df).items():
+                        ax_rows.append({
+                            "Pose": pid, "Eksen": ax_n,
+                            "Mean(mm)": round(st["mean"], 6),
+                            "Std(mm)": round(st["std"], 6),
+                            "3σ-RP": round(st["RP_axis"], 6),
+                            "Min": round(st["min"], 6),
+                            "Max": round(st["max"], 6),
+                            "Range": round(st["range"], 6),
+                        })
+                ax_df = pd.DataFrame(ax_rows)
+                n_rows = min(len(ax_df) + 1, 30)
+                fig_h  = max(4.0, n_rows * 0.38)
+                fig, ax = plt.subplots(figsize=(11.7, fig_h), facecolor="#1e1e2e")
+                ax.set_facecolor("#1e1e2e")
+                ax.axis("off")
+                ax.text(0.5, 1.01, "Eksen İstatistikleri",
+                        ha="center", va="bottom", fontsize=13,
+                        color="#cba6f7", fontweight="bold",
+                        transform=ax.transAxes)
+                if len(ax_df) > 0:
+                    tbl2 = ax.table(
+                        cellText=ax_df.values.tolist(),
+                        colLabels=list(ax_df.columns),
+                        loc="center", cellLoc="center",
+                    )
+                    tbl2.auto_set_font_size(False)
+                    tbl2.set_fontsize(8.5)
+                    for (r, c), cell in tbl2.get_celld().items():
+                        if r == 0:
+                            cell.set_facecolor("#45475a")
+                            cell.set_text_props(color="#cba6f7", fontweight="bold")
+                        else:
+                            cell.set_facecolor("#313244")
+                            cell.set_text_props(color="#cdd6f4")
+                        cell.set_edgecolor("#585b70")
+                pdf.savefig(fig, facecolor=fig.get_facecolor())
+                plt.close(fig)
+
+            messagebox.showinfo("PDF Kaydedildi",
+                                f"Rapor kaydedildi ({len(self.results)} pose, 6 sayfa):\n{path}")
+            self.status_var.set(
+                f"PDF raporu — {os.path.basename(path)}"
+            )
+        except Exception as e:
+            messagebox.showerror("Hata", f"PDF oluşturulamadı:\n{e}")
+
     def _fill(self, tree, df):
         tree.delete(*tree.get_children())
         tree["columns"] = list(df.columns)
