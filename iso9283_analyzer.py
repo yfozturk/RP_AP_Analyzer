@@ -16,6 +16,18 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 import matplotlib.gridspec as gridspec
 import matplotlib.patches as mpatches
 import os
+import json
+import datetime
+import threading
+
+# ─────────────────────────────────────────────
+#  Backup ayarları
+# ─────────────────────────────────────────────
+BACKUP_DIR  = os.path.join(os.path.expanduser("~"), "iso9283_backups")
+BACKUP_FILE = os.path.join(BACKUP_DIR, "manual_backup.json")
+AUTO_SAVE_INTERVAL_SEC = 30   # otomatik kayıt her 30 saniyede bir
+
+os.makedirs(BACKUP_DIR, exist_ok=True)
 
 # ─────────────────────────────────────────────
 #  Quality thresholds (mm)  — ISO 9283
@@ -521,8 +533,11 @@ class ISO9283App(tk.Tk):
         self.df_norm   = None
         self.pose_data = None
         self.results   = None
+        self._auto_save_job = None
 
         self._build_ui()
+        self._start_auto_save()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ── UI ─────────────────────────────────────
     def _build_ui(self):
@@ -822,9 +837,17 @@ class ISO9283App(tk.Tk):
                   bg="#89b4fa", **bb).pack(side="left", padx=5)
         tk.Button(ctrl, text="\u25b6  Analiz Et", command=self._run_manual_analysis,
                   bg="#a6e3a1", **bb).pack(side="left", padx=5)
+        tk.Button(ctrl, text="\U0001f4be  Yedekle", command=self._save_manual_backup,
+                  bg="#fab387", **bb).pack(side="left", padx=5)
+        tk.Button(ctrl, text="\u21a9  Yedek Y\u00fckle", command=self._restore_manual_backup,
+                  bg="#cba6f7", **bb).pack(side="left", padx=5)
         tk.Button(ctrl, text="Temizle", command=self._clear_manual_table,
                   bg="#f38ba8", **bb).pack(side="left", padx=5)
-        tk.Label(ctrl, text="  Tab / Enter \u2192 sonraki h\u00fccre",
+        self._backup_status = tk.Label(ctrl, text="",
+                 bg="#1e1e2e", fg="#a6e3a1",
+                 font=("Segoe UI", 8, "italic"))
+        self._backup_status.pack(side="left", padx=10)
+        tk.Label(ctrl, text="  Tab/Enter \u2192 sonraki h\u00fccre",
                  bg="#1e1e2e", fg="#6c7086",
                  font=("Segoe UI", 9, "italic")).pack(side="left", padx=10)
 
@@ -946,6 +969,117 @@ class ISO9283App(tk.Tk):
                 if self._man_cols[j] != "Set":
                     e.delete(0, "end")
                     e.insert(0, "0.000000")
+
+    # ── Backup / Restore ───────────────────────
+    def _collect_manual_data(self):
+        """Tablodaki mevcut değerleri dict olarak döner."""
+        if not self._man_entries or not self._man_cols:
+            return None
+        data = {}
+        for j, col in enumerate(self._man_cols):
+            vals = []
+            for i, row_ents in enumerate(self._man_entries):
+                txt = row_ents[j].get().strip().replace(",", ".")
+                vals.append(i + 1 if col == "Set" else txt)
+            data[col] = vals
+        return data
+
+    def _save_manual_backup(self, silent=False):
+        """Manuel tabloyu JSON dosyasına yedekler."""
+        data = self._collect_manual_data()
+        if data is None:
+            return
+        payload = {
+            "saved_at": datetime.datetime.now().isoformat(timespec="seconds"),
+            "n_sets":   int(self.man_sets_var.get()),
+            "n_poses":  int(self.man_poses_var.get()),
+            "cols":     self._man_cols,
+            "data":     data,
+        }
+        try:
+            with open(BACKUP_FILE, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            ts = datetime.datetime.now().strftime("%H:%M:%S")
+            if hasattr(self, "_backup_status"):
+                self._backup_status.config(text=f"\u2714 Yedeklendi {ts}")
+            if not silent:
+                self.status_var.set(f"Yedeklendi  →  {BACKUP_FILE}")
+        except Exception as e:
+            if not silent:
+                messagebox.showerror("Yedek Hatasi", f"Yedek kaydedilemedi:\n{e}")
+
+    def _restore_manual_backup(self):
+        """Yedek JSON dosyasından tabloyu geri yükler."""
+        if not os.path.exists(BACKUP_FILE):
+            messagebox.showinfo("Yedek Yok", "Henüz kaydedilmiş yedek bulunamadı.")
+            return
+        try:
+            with open(BACKUP_FILE, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            saved_at = payload.get("saved_at", "?")
+            if not messagebox.askyesno(
+                "Yedeği Yükle",
+                f"Kaydedilme zamanı: {saved_at}\n\nBu yedek yüklensin mi?"
+            ):
+                return
+            self.man_sets_var.set(payload["n_sets"])
+            self.man_poses_var.set(payload["n_poses"])
+            self._rebuild_manual_table()
+            cols = payload["cols"]
+            data = payload["data"]
+            for i, row_ents in enumerate(self._man_entries):
+                for j, col in enumerate(self._man_cols):
+                    if col == "Set" or col not in data:
+                        continue
+                    if i < len(data[col]):
+                        e = row_ents[j]
+                        e.delete(0, "end")
+                        e.insert(0, str(data[col][i]))
+            self.status_var.set(f"Yedek yüklendi  ←  {saved_at}")
+            if hasattr(self, "_backup_status"):
+                self._backup_status.config(text=f"\u21a9 Yüklendi: {saved_at}")
+        except Exception as e:
+            messagebox.showerror("Yükleme Hatasi", f"Yedek yüklenemedi:\n{e}")
+
+    def _start_auto_save(self):
+        """Her 30 saniyede manuel tabloyu otomatik yedekler."""
+        self._save_manual_backup(silent=True)
+        self._auto_save_job = self.after(
+            AUTO_SAVE_INTERVAL_SEC * 1000, self._start_auto_save
+        )
+
+    def _on_close(self):
+        """Pencere kapatılırken son yedeği alır."""
+        self._save_manual_backup(silent=True)
+        # Analiz sonuçları varsa otomatik Excel yedek
+        if self.results is not None and self.df_raw is not None:
+            ts  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = os.path.join(BACKUP_DIR, f"analiz_yedek_{ts}.xlsx")
+            try:
+                rp_rows, ax_rows = [], []
+                for pid, res in self.results.items():
+                    rp_rows.append({
+                        "Pose": pid,
+                        "AP (mm)": res["AP"],
+                        "AP Kalite": grade_label(rate_quality(res["AP"])),
+                        "RP (mm)": res["RP"],
+                        "RP Kalite": grade_label(rate_quality(res["RP"])),
+                        "l_bar": res["l_bar"], "S_l": res["S_l"],
+                        "Mean_A": res["mean_A"], "Mean_B": res["mean_B"],
+                        "Mean_C": res["mean_C"],
+                    })
+                    for ax_n, st in axis_repeatability(self.pose_data[pid]).items():
+                        ax_rows.append({"Pose": pid, "Eksen": ax_n, **st})
+                with pd.ExcelWriter(path, engine="openpyxl") as w:
+                    self.df_raw.to_excel(w, sheet_name="Ham Veri", index=False)
+                    self.df_norm.round(6).to_excel(w, sheet_name="Normalize", index=False)
+                    pd.DataFrame(rp_rows).to_excel(w, sheet_name="ISO9283 Sonuclar", index=False)
+                    pd.DataFrame(ax_rows).to_excel(w, sheet_name="Eksen Istatistik", index=False)
+            except Exception:
+                pass
+        if self._auto_save_job:
+            self.after_cancel(self._auto_save_job)
+        self.destroy()
 
     def _run_manual_analysis(self):
         if not self._man_entries:

@@ -619,6 +619,8 @@ with st.sidebar:
 
 if "df_raw" not in st.session_state:
     st.session_state.df_raw = None
+if "backup_csv" not in st.session_state:
+    st.session_state.backup_csv = None  # son manuel verinin CSV yedeği
 
 # ─────────────────────────────────────────────
 #  Data Input
@@ -682,6 +684,24 @@ else:  # Manuel Giriş
             default_data[c] = [0.0] * n_sets
         st.session_state.manual_df = pd.DataFrame(default_data)
 
+    # ── Yedekten geri yükle ──
+    with st.expander("↩ Yedekten Geri Yükle", expanded=False):
+        restore_file = st.file_uploader(
+            "Daha önce indirdiğin CSV yedeğini seç",
+            type=["csv"],
+            key="restore_uploader",
+            label_visibility="collapsed",
+        )
+        if restore_file:
+            try:
+                restored = pd.read_csv(restore_file)
+                st.session_state.manual_df    = restored
+                st.session_state.manual_shape = (len(restored), (len(restored.columns) - 1) // 3)
+                st.success(f"✅ Yedek yüklendi: {len(restored)} set, {len(restored.columns)-1} kolon")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Yedek yüklenemedi: {e}")
+
     edited = st.data_editor(
         st.session_state.manual_df,
         use_container_width=True,
@@ -693,9 +713,22 @@ else:  # Manuel Giriş
         key="manual_editor",
     )
 
-    if st.button("▶️ Analiz Et", type="primary", use_container_width=True):
-        st.session_state.df_raw    = edited.copy()
-        st.session_state.manual_df = edited.copy()
+    btn_col1, btn_col2 = st.columns(2)
+    with btn_col1:
+        if st.button("▶️ Analiz Et", type="primary", use_container_width=True):
+            st.session_state.df_raw    = edited.copy()
+            st.session_state.manual_df = edited.copy()
+    with btn_col2:
+        import datetime as _dt
+        _ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        st.download_button(
+            label="💾 Veriyi Yedekle (CSV İndir)",
+            data=edited.to_csv(index=False).encode("utf-8"),
+            file_name=f"manuel_veri_yedek_{_ts}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            help="Net kesilirse veya sayfa kapanırsa bu CSV'yi tekrar yükleyebilirsin",
+        )
 
 # ─────────────────────────────────────────────
 #  Analysis & Results
@@ -843,13 +876,26 @@ if df_raw is not None:
             pd.DataFrame(rp_exp).to_excel(writer, sheet_name="ISO9283 Sonuclar", index=False)
             pd.DataFrame(ax_exp).to_excel(writer, sheet_name="Eksen Istatistik", index=False)
 
-        st.download_button(
-            label="⬇️ Excel Raporu İndir (.xlsx)",
-            data=buf.getvalue(),
-            file_name="iso9283_analiz.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+        import datetime as _dt
+        _ts2 = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        dl_col1, dl_col2 = st.columns(2)
+        with dl_col1:
+            st.download_button(
+                label="⬇️ Excel Raporu İndir (.xlsx)",
+                data=buf.getvalue(),
+                file_name=f"iso9283_analiz_{_ts2}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+        with dl_col2:
+            st.download_button(
+                label="💾 Ham Veri Yedeği (.csv)",
+                data=df_raw.to_csv(index=False).encode("utf-8"),
+                file_name=f"ham_veri_yedek_{_ts2}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                help="Bu CSV'yi daha sonra tekrar yükleyerek analizi sıfırdan yapabilirsin",
+            )
 
     except Exception as e:
         st.error(f"❌ Analiz hatası: {e}")
