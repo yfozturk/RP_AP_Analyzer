@@ -436,41 +436,146 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    [data-testid="stAppViewContainer"] { background-color: #1e1e2e; }
-    [data-testid="stSidebar"]          { background-color: #181825; }
-    h1, h2, h3 { color: #cba6f7 !important; }
-    p, li, label { color: #cdd6f4; }
-    .stTabs [data-baseweb="tab"] { color: #cdd6f4; font-weight: 600; }
+    /* ── Arka plan ── */
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"],
+    .main { background-color: #1e1e2e !important; }
+    [data-testid="stSidebar"] { background-color: #181825 !important; }
+    [data-testid="stSidebarContent"] { background-color: #181825 !important; }
+
+    /* ── Başlıklar & metin ── */
+    h1, h2, h3, h4 { color: #cba6f7 !important; }
+    p, li, span, div { color: #cdd6f4; }
+    label, .stRadio label, .stRadio div[role="radiogroup"] label {
+        color: #cdd6f4 !important;
+    }
+
+    /* ── Sekmeler ── */
+    .stTabs [data-baseweb="tab-list"] {
+        background-color: #181825;
+        border-radius: 8px 8px 0 0;
+        gap: 4px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        color: #a6adc8 !important;
+        font-weight: 600;
+        background-color: #313244 !important;
+        border-radius: 6px 6px 0 0 !important;
+        padding: 6px 16px !important;
+    }
     .stTabs [aria-selected="true"] {
         color: #cba6f7 !important;
-        border-bottom: 3px solid #cba6f7;
+        background-color: #45475a !important;
+        border-bottom: 3px solid #cba6f7 !important;
     }
-    div[data-testid="stMetric"] {
-        background-color: #313244;
-        border-radius: 10px;
-        padding: 0.7rem 1rem;
-        border-left: 3px solid #cba6f7;
+    .stTabs [data-baseweb="tab-panel"] {
+        background-color: #1e1e2e;
+        border: 1px solid #313244;
+        border-top: none;
+        border-radius: 0 0 8px 8px;
+        padding: 12px;
     }
-    div[data-testid="stMetricValue"] { color: #cdd6f4 !important; }
-    div[data-testid="stMetricDelta"] { color: #a6e3a1 !important; font-size: 0.85rem !important; }
-    .stDownloadButton > button {
-        background-color: #a6e3a1 !important;
-        color: #1e1e2e !important;
-        border-radius: 8px;
-        font-weight: bold;
-        border: none;
-        width: 100%;
-    }
+
+    /* ── Butonlar — tüm türler ── */
+    button[kind="primary"],
+    [data-testid="baseButton-primary"],
     .stButton > button[kind="primary"] {
         background-color: #cba6f7 !important;
         color: #1e1e2e !important;
-        border-radius: 8px;
-        font-weight: bold;
-        border: none;
+        border: none !important;
+        border-radius: 8px !important;
+        font-weight: bold !important;
     }
-    [data-testid="stFileUploader"] { background-color: #313244; border-radius: 8px; }
-    .stDataFrame { background-color: #313244; }
-    .stAlert { border-radius: 8px; }
+    button[kind="secondary"],
+    [data-testid="baseButton-secondary"],
+    .stButton > button {
+        background-color: #313244 !important;
+        color: #cdd6f4 !important;
+        border: 1px solid #585b70 !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+    }
+    button[kind="secondary"]:hover,
+    .stButton > button:hover {
+        background-color: #45475a !important;
+        border-color: #cba6f7 !important;
+        color: #cba6f7 !important;
+    }
+    /* İndirme butonu */
+    [data-testid="stDownloadButton"] > button,
+    .stDownloadButton > button {
+        background-color: #a6e3a1 !important;
+        color: #1e1e2e !important;
+        border: none !important;
+        border-radius: 8px !important;
+        font-weight: bold !important;
+        width: 100% !important;
+    }
+    [data-testid="stDownloadButton"] > button:hover {
+        background-color: #7ccc76 !important;
+    }
+
+    /* ── Metrik kartlar ── */
+    div[data-testid="stMetric"] {
+        background-color: #313244 !important;
+        border-radius: 10px !important;
+        padding: 0.7rem 1rem !important;
+        border-left: 3px solid #cba6f7 !important;
+    }
+    div[data-testid="stMetricValue"] > div { color: #cdd6f4 !important; }
+    div[data-testid="stMetricDelta"] > div {
+        color: #a6e3a1 !important;
+        font-size: 0.82rem !important;
+    }
+
+    /* ── Giriş alanları ── */
+    [data-testid="stFileUploader"] {
+        background-color: #313244 !important;
+        border-radius: 8px !important;
+        border: 1px dashed #585b70 !important;
+    }
+    [data-testid="stFileUploader"] label { color: #cdd6f4 !important; }
+    [data-testid="stNumberInput"] input,
+    [data-testid="stTextInput"] input {
+        background-color: #313244 !important;
+        color: #cdd6f4 !important;
+        border: 1px solid #585b70 !important;
+        border-radius: 6px !important;
+    }
+
+    /* ── Data editor / tablo ── */
+    [data-testid="stDataFrame"],
+    .stDataFrame { background-color: #313244 !important; }
+    [data-testid="data-grid-canvas"] { background-color: #313244 !important; }
+
+    /* ── Expander ── */
+    [data-testid="stExpander"] {
+        background-color: #313244 !important;
+        border: 1px solid #45475a !important;
+        border-radius: 8px !important;
+    }
+    [data-testid="stExpander"] summary { color: #cdd6f4 !important; }
+
+    /* ── Divider ── */
+    hr { border-color: #45475a !important; }
+
+    /* ── Uyarı/bilgi kutuları ── */
+    .stAlert { border-radius: 8px !important; }
+    [data-testid="stNotification"] { border-radius: 8px !important; }
+
+    /* ── Radio buton ── */
+    [data-testid="stRadio"] label { color: #cdd6f4 !important; }
+    [data-testid="stRadio"] div[data-baseweb="radio"] > div:first-child {
+        border-color: #cba6f7 !important;
+    }
+
+    /* ── Sidebar başlık & yazı ── */
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3 { color: #cba6f7 !important; }
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span { color: #cdd6f4 !important; }
+    [data-testid="stSidebar"] hr  { border-color: #45475a !important; }
 </style>
 """, unsafe_allow_html=True)
 
