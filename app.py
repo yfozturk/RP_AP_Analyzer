@@ -63,8 +63,10 @@ def grade_label(g: str) -> str:
 def normalize_to_set1(df_raw):
     df = df_raw.copy()
     numeric_cols = [c for c in df.columns if c != "Set"]
-    reference = df[numeric_cols].iloc[0]
-    df[numeric_cols] = df[numeric_cols] - reference
+    # cast to float64 (numpy-backed) so arithmetic works on any pandas/pyarrow version
+    df[numeric_cols] = df[numeric_cols].astype("float64")
+    reference = df[numeric_cols].iloc[0].to_numpy()
+    df[numeric_cols] = df[numeric_cols].values - reference
     return df
 
 
