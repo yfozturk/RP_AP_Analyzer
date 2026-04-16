@@ -587,6 +587,332 @@ def make_comparison_bullseye_plotly(pid, pose_df_a, res_a, pose_df_b, res_b, lab
     return fig
 
 
+def generate_pdf_report(df_raw, df_norm, pose_data, results):
+    """
+    Matplotlib PdfPages ile çok sayfalı PDF raporu üretir.
+    Sayfa 1: Kapak + özet tablo
+    Sayfa 2: Bullseye (tüm pose'lar)
+    Sayfa 3: Eksen sapması + L_i
+    Sayfa 4: Box plot
+    Sayfa 5: Kalite özeti
+    Sayfa 6: Eksen istatistikleri tablosu
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    import matplotlib.gridspec as gridspec
+    from matplotlib.backends.backend_pdf import PdfPages
+    import datetime as _dt
+
+    _RING_BORDER = {
+        "Iyi": "#1a7a32", "Kabul": "#9e6d00",
+        "Sinirli": "#9e3600", "Kotu": "#a01010",
+    }
+
+    def _style_ax(ax):
+        ax.set_facecolor("#313244")
+        ax.tick_params(colors="#cdd6f4", labelsize=8)
+        for sp in ax.spines.values():
+            sp.set_edgecolor("#585b70")
+        ax.grid(color="#45475a", linewidth=0.5, alpha=0.5)
+
+    buf = io.BytesIO()
+    with PdfPages(buf) as pdf:
+        # ── Sayfa 1: Kapak + özet tablo ───────────────────────────
+        fig, ax = plt.subplots(figsize=(11.7, 8.3), facecolor="#1e1e2e")
+        ax.set_facecolor("#1e1e2e")
+        ax.axis("off")
+        ax.text(0.5, 0.93, "ISO 9283 — RP & AP Analiz Raporu",
+                ha="center", va="center", fontsize=22, fontweight="bold",
+                color="#cba6f7", transform=ax.transAxes)
+        ax.text(0.5, 0.86,
+                f"Tarih: {_dt.datetime.now().strftime('%d.%m.%Y %H:%M')}   |   "
+                f"{len(df_raw)} set   |   {len(results)} pose",
+                ha="center", va="center", fontsize=11,
+                color="#a6adc8", transform=ax.transAxes)
+        col_labels = ["Pose", "AP (mm)", "AP Kalite", "RP (mm)", "RP Kalite",
+                      "l-bar (mm)", "S_l (mm)"]
+        rows = []
+        for pid, res in results.items():
+            rows.append([
+                pid,
+                f"{res['AP']:.6f}",
+                grade_label(rate_quality(res['AP'])),
+                f"{res['RP']:.6f}",
+                grade_label(rate_quality(res['RP'])),
+                f"{res['l_bar']:.6f}",
+                f"{res['S_l']:.6f}",
+            ])
+        tbl = ax.table(cellText=rows, colLabels=col_labels,
+                       loc="center", cellLoc="center",
+                       bbox=[0.05, 0.25, 0.90, 0.52])
+        tbl.auto_set_font_size(False)
+        tbl.set_fontsize(10)
+        for (r, c), cell in tbl.get_celld().items():
+            if r == 0:
+                cell.set_facecolor("#45475a")
+                cell.set_text_props(color="#cba6f7", fontweight="bold")
+            else:
+                cell.set_facecolor("#313244")
+                if c in (2, 4):
+                    try:
+                        met_val = float(rows[r - 1][c - 1])
+                        g = rate_quality(met_val)
+                        cell.set_facecolor(GRADE_COLORS_LIGHT[g])
+                        cell.set_text_props(color=GRADE_COLORS[g], fontweight="bold")
+                    except Exception:
+                        cell.set_text_props(color="#cdd6f4")
+                else:
+                    cell.set_text_props(color="#cdd6f4")
+            cell.set_edgecolor("#585b70")
+        thr_line = (
+            f"İyi ≤ {THRESHOLDS['Iyi']:.2f} mm   |   "
+            f"Kabul Edilebilir ≤ {THRESHOLDS['Kabul']:.2f} mm   |   "
+            f"Sınırlı ≤ {THRESHOLDS['Sinirli']:.2f} mm   |   "
+            f"Uygun Değil > {THRESHOLDS['Sinirli']:.2f} mm"
+        )
+        ax.text(0.5, 0.17, thr_line, ha="center", va="center",
+                fontsize=8.5, color="#585b70", transform=ax.transAxes)
+        pdf.savefig(fig, facecolor=fig.get_facecolor())
+        plt.close(fig)
+
+        # ── Sayfa 2: Bullseye ─────────────────────────────────────
+        n = len(pose_data)
+        fig, axlist = plt.subplots(1, n, figsize=(7.5 * n, 7.5), facecolor="#f5f5f5")
+        if n == 1:
+            axlist = [axlist]
+        fig.suptitle("ISO 9283  —  Bullseye Hedef Grafiği  (ΔA  vs  ΔB)",
+                     color="#1e1e2e", fontsize=13, fontweight="bold")
+        for bax, (pid, pose_df) in zip(axlist, pose_data.items()):
+            res = results[pid]
+            A, B = pose_df.iloc[:, 0].values, pose_df.iloc[:, 1].values
+            mA, mB, RP, AP = res["mean_A"], res["mean_B"], res["RP"], res["AP"]
+            ax_names = list(pose_df.columns)
+            n_sets = len(A)
+            all_r = np.sqrt(A**2 + B**2)
+            r_max = max(all_r.max() * 1.45 if len(all_r) else 0.01,
+                        (np.sqrt(mA**2 + mB**2) + RP) * 1.35,
+                        THRESHOLDS["Sinirli"] * 1.6, 1e-5)
+            bax.set_aspect("equal")
+            bax.set_facecolor(GRADE_COLORS_LIGHT["Kotu"])
+            for gc in ["Sinirli", "Kabul", "Iyi"]:
+                bax.add_patch(plt.Circle((0, 0), THRESHOLDS[gc],
+                                         color=GRADE_COLORS_LIGHT[gc], zorder=1, linewidth=0))
+            for gc in ["Sinirli", "Kabul", "Iyi"]:
+                r = THRESHOLDS[gc]
+                bax.add_patch(plt.Circle((0, 0), r, color=_RING_BORDER[gc],
+                                          fill=False, linewidth=1.8, linestyle="--",
+                                          zorder=2, alpha=0.75))
+                ang = np.radians(42)
+                frac = 0.68 if gc != "Iyi" else 0.55
+                lx, ly = r * np.cos(ang) * frac, r * np.sin(ang) * frac
+                short = {"Iyi": "İyi", "Kabul": "Kabul", "Sinirli": "Sınırlı"}
+                bax.text(lx, ly, f"{short[gc]}\n≤{r:.2f} mm",
+                         fontsize=6.5, color=_RING_BORDER[gc],
+                         ha="left", va="bottom", zorder=6, fontweight="bold",
+                         bbox=dict(boxstyle="round,pad=0.18", fc="white", alpha=0.80, ec="none"))
+            bax.axhline(0, color="#bbbbbb", lw=0.7, zorder=2, alpha=0.8)
+            bax.axvline(0, color="#bbbbbb", lw=0.7, zorder=2, alpha=0.8)
+            sc = bax.scatter(A, B, c=np.arange(n_sets), cmap="plasma", s=55, zorder=7,
+                             alpha=0.55, edgecolors="white", linewidths=0.7,
+                             vmin=0, vmax=n_sets - 1)
+            bax.plot(A, B, color="#888888", lw=0.35, alpha=0.22, zorder=6)
+            plt.colorbar(sc, ax=bax, pad=0.02, fraction=0.034, shrink=0.85).set_label("Set #", color="#333333", fontsize=8)
+            if abs(mA) > 1e-9 or abs(mB) > 1e-9:
+                bax.annotate("", xy=(mA, mB), xytext=(0, 0),
+                             arrowprops=dict(arrowstyle="->", color="#1565C0", lw=2.2, mutation_scale=14), zorder=8)
+                bax.text(mA * 0.5, mB * 0.5, f"AP={AP:.4f} mm",
+                         color="#1565C0", fontsize=7.5, zorder=9, ha="center", fontweight="bold",
+                         bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.88, ec="#1565C0", lw=0.8))
+            bax.add_patch(plt.Circle((mA, mB), RP, color="#6a1de0",
+                                      fill=False, linewidth=2.4, linestyle="-", zorder=8))
+            bax.add_patch(plt.Circle((mA, mB), RP, color="#6a1de0", fill=True, alpha=0.06, zorder=7))
+            bax.text(mA + RP * 0.72, mB + RP * 0.72, f"RP={RP:.4f} mm",
+                     color="#6a1de0", fontsize=7.5, zorder=9, fontweight="bold",
+                     bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.88, ec="#6a1de0", lw=0.8))
+            bax.scatter(mA, mB, marker="+", s=280, color="#1565C0", linewidths=3.2, zorder=10)
+            bax.scatter(0, 0, marker="x", s=170, color="#cc1e1e", linewidths=2.8, zorder=10)
+            ap_g, rp_g = rate_quality(AP), rate_quality(RP)
+            fcs = {"Iyi": "#edfaef", "Kabul": "#fffaed", "Sinirli": "#fff3eb", "Kotu": "#fff0f0"}
+            badge = f"AP = {AP:.5f} mm  →  {grade_label(ap_g)}\nRP = {RP:.5f} mm  →  {grade_label(rp_g)}"
+            bax.text(0.02, 0.98, badge, transform=bax.transAxes, fontsize=8.5, color="#1e1e2e",
+                     va="top", ha="left", family="monospace", zorder=12,
+                     bbox=dict(boxstyle="round,pad=0.5", fc=fcs.get(rp_g, "white"),
+                               alpha=0.95, ec=GRADE_COLORS[rp_g], lw=2.2))
+            bax.set_xlim(-r_max, r_max)
+            bax.set_ylim(-r_max, r_max)
+            bax.set_title(f"{pid}  —  Bullseye  ({n_sets} ölçüm)", color="#1e1e2e", fontsize=11, fontweight="bold")
+            bax.set_xlabel(f"Δ{ax_names[0]} (mm)", color="#333333")
+            bax.set_ylabel(f"Δ{ax_names[1]} (mm)", color="#333333")
+            bax.tick_params(colors="#333333", labelsize=8)
+            for sp in bax.spines.values():
+                sp.set_edgecolor("#cccccc")
+            bax.grid(color="#dddddd", linewidth=0.5, alpha=0.7)
+        fig.tight_layout(rect=[0, 0, 1, 0.94])
+        pdf.savefig(fig, facecolor=fig.get_facecolor())
+        plt.close(fig)
+
+        # ── Sayfa 3: Eksen sapması + L_i ─────────────────────────
+        pt_colors = ["#89dceb", "#a6e3a1", "#f38ba8"]
+        fig2 = plt.figure(figsize=(14, 5 * n), facecolor="#1e1e2e")
+        fig2.suptitle("ISO 9283  —  Eksen Sapması & Uzaklık Analizi",
+                      fontsize=13, color="white", fontweight="bold", y=0.99)
+        gs = gridspec.GridSpec(n, 2, figure=fig2, hspace=0.55, wspace=0.35)
+        for row_idx, (pid, pose_df) in enumerate(pose_data.items()):
+            res = results[pid]
+            sets = np.arange(1, len(pose_df) + 1)
+            ax_names = list(pose_df.columns)
+            ax1 = fig2.add_subplot(gs[row_idx, 0])
+            for i, col in enumerate(ax_names):
+                ax1.plot(sets, pose_df[col], color=pt_colors[i], lw=1.3,
+                         label=f"Delta-{col}", alpha=0.9)
+            ax1.axhline(0, color="white", lw=0.6, ls="--", alpha=0.35)
+            ax1.set_title(f"{pid}  —  Eksen Sapması", color="white", fontsize=10)
+            ax1.set_xlabel("Set", color="#cdd6f4")
+            ax1.set_ylabel("Delta (mm)", color="#cdd6f4")
+            ax1.legend(fontsize=8, facecolor="#313244", labelcolor="white")
+            _style_ax(ax1)
+            ax2 = fig2.add_subplot(gs[row_idx, 1])
+            l_i = res["l_i"]
+            ax2.bar(sets, l_i, color="#b4befe", alpha=0.70, label="l_i")
+            ax2.axhline(res["l_bar"], color="#a6e3a1", lw=1.8, ls="-",
+                        label=f"l-bar = {res['l_bar']:.5f}")
+            ax2.axhline(res["RP"], color="#f38ba8", lw=2.0, ls="--",
+                        label=f"RP = {res['RP']:.5f}")
+            ax2.set_title(f"{pid}  —  L_i + RP sınırı", color="white", fontsize=10)
+            ax2.set_xlabel("Set", color="#cdd6f4")
+            ax2.set_ylabel("l_i (mm)", color="#cdd6f4")
+            ax2.legend(fontsize=8, facecolor="#313244", labelcolor="white")
+            _style_ax(ax2)
+        fig2.tight_layout(rect=[0, 0, 1, 0.97])
+        pdf.savefig(fig2, facecolor=fig2.get_facecolor())
+        plt.close(fig2)
+
+        # ── Sayfa 4: Box plot ────────────────────────────────────
+        box_colors = ["#89dceb", "#a6e3a1", "#f38ba8"]
+        fig3, axes3 = plt.subplots(1, n, figsize=(6 * n, 5), facecolor="#1e1e2e")
+        if n == 1:
+            axes3 = [axes3]
+        fig3.suptitle("ISO 9283  —  Eksen Bazlı Box Plot",
+                      fontsize=13, color="white", fontweight="bold")
+        for bax3, (pid, pose_df) in zip(axes3, pose_data.items()):
+            bp = bax3.boxplot(
+                [pose_df.iloc[:, i] for i in range(len(pose_df.columns))],
+                tick_labels=list(pose_df.columns),
+                patch_artist=True,
+                medianprops=dict(color="#f38ba8", linewidth=2),
+                whiskerprops=dict(color="#cdd6f4"),
+                capprops=dict(color="#cdd6f4"),
+                flierprops=dict(markerfacecolor="#fab387", marker="o", ms=4),
+            )
+            for patch, col in zip(bp["boxes"], box_colors):
+                patch.set_facecolor(col)
+                patch.set_alpha(0.72)
+            bax3.axhline(0, color="white", ls="--", lw=0.8, alpha=0.4)
+            bax3.set_title(f"{pid}  —  Eksen Dağılımı", color="white", fontsize=11)
+            bax3.set_ylabel("Delta (mm)", color="#cdd6f4")
+            _style_ax(bax3)
+        fig3.tight_layout()
+        pdf.savefig(fig3, facecolor=fig3.get_facecolor())
+        plt.close(fig3)
+
+        # ── Sayfa 5: Kalite özeti ─────────────────────────────────
+        pose_ids = list(results.keys())
+        n_p = len(pose_ids)
+        fig4, axes4 = plt.subplots(1, 2,
+                                   figsize=(max(9, n_p * 3.5), max(4, n_p * 1.4)),
+                                   facecolor="#1e1e2e")
+        fig4.suptitle("ISO 9283  —  Kalite Özet Raporu",
+                      color="white", fontsize=13, fontweight="bold")
+        bar_max = THRESHOLDS["Sinirli"] * 1.6
+        for col_idx, (metric, title) in enumerate(
+                [("AP", "Doğruluk  (AP)"), ("RP", "Tekrarlanabilirlik  (RP)")]):
+            ax4 = axes4[col_idx]
+            ax4.set_facecolor("#181825")
+            ax4.set_xlim(0, 1)
+            ax4.set_ylim(-0.6, n_p - 0.4)
+            ax4.axis("off")
+            ax4.set_title(title, color="white", fontsize=12, fontweight="bold", pad=8)
+            for i, pid in enumerate(pose_ids):
+                val = results[pid][metric]
+                grade = rate_quality(val)
+                color = GRADE_COLORS[grade]
+                y = n_p - 1 - i
+                ax4.add_patch(mpatches.FancyBboxPatch(
+                    (0.01, y - 0.40), 0.98, 0.75, boxstyle="round,pad=0.02",
+                    fc=color, alpha=0.12, ec=color, lw=1.2, transform=ax4.transData))
+                ax4.add_patch(mpatches.FancyBboxPatch(
+                    (0.03, y - 0.17), 0.63, 0.26, boxstyle="round,pad=0.01",
+                    fc="#313244", alpha=0.9, ec="#585b70", lw=0.5, transform=ax4.transData))
+                frac = min(val / bar_max, 1.0)
+                if frac > 0.005:
+                    ax4.add_patch(mpatches.FancyBboxPatch(
+                        (0.03, y - 0.17), 0.63 * frac, 0.26, boxstyle="round,pad=0.01",
+                        fc=color, alpha=0.78, ec="none", transform=ax4.transData))
+                ax4.add_patch(mpatches.FancyBboxPatch(
+                    (0.70, y - 0.34), 0.27, 0.63, boxstyle="round,pad=0.02",
+                    fc=color, alpha=0.88, ec="none", transform=ax4.transData))
+                ax4.text(0.835, y + 0.00, grade_label(grade),
+                         ha="center", va="center", fontsize=10.5, fontweight="bold",
+                         color="#1e1e2e", transform=ax4.transData)
+                ax4.text(0.055, y + 0.18, pid, ha="left", va="center",
+                         fontsize=10, fontweight="bold", color="white", transform=ax4.transData)
+                ax4.text(0.055, y - 0.01, f"{val:.6f} mm", ha="left", va="center",
+                         fontsize=8.5, color="#cdd6f4", family="monospace",
+                         transform=ax4.transData)
+            thr_txt = (f"İyi ≤ {THRESHOLDS['Iyi']:.2f} mm   |   "
+                       f"Kabul Edilebilir ≤ {THRESHOLDS['Kabul']:.2f} mm   |   "
+                       f"Sınırlı ≤ {THRESHOLDS['Sinirli']:.2f} mm   |   "
+                       f"Uygun Değil > {THRESHOLDS['Sinirli']:.2f} mm")
+            ax4.text(0.5, -0.55, thr_txt, ha="center", va="center",
+                     fontsize=6.8, color="#444444", transform=ax4.transData)
+        fig4.tight_layout(rect=[0, 0.02, 1, 0.93])
+        pdf.savefig(fig4, facecolor=fig4.get_facecolor())
+        plt.close(fig4)
+
+        # ── Sayfa 6: Eksen istatistikleri tablosu ────────────────
+        ax_rows = []
+        for pid, pose_df in pose_data.items():
+            for ax_n, s in axis_repeatability(pose_df).items():
+                ax_rows.append({
+                    "Pose": pid, "Eksen": ax_n,
+                    "Mean(mm)": round(s["mean"], 6),
+                    "Std(mm)": round(s["std"], 6),
+                    "3σ-RP": round(s["RP_axis"], 6),
+                    "Min": round(s["min"], 6),
+                    "Max": round(s["max"], 6),
+                    "Range": round(s["range"], 6),
+                })
+        ax_df = pd.DataFrame(ax_rows)
+        fig5_h = max(4.0, (len(ax_df) + 1) * 0.4)
+        fig5, ax5 = plt.subplots(figsize=(11.7, fig5_h), facecolor="#1e1e2e")
+        ax5.set_facecolor("#1e1e2e")
+        ax5.axis("off")
+        ax5.text(0.5, 1.01, "Eksen İstatistikleri",
+                 ha="center", va="bottom", fontsize=13, color="#cba6f7",
+                 fontweight="bold", transform=ax5.transAxes)
+        if len(ax_df) > 0:
+            tbl5 = ax5.table(cellText=ax_df.values.tolist(),
+                             colLabels=list(ax_df.columns),
+                             loc="center", cellLoc="center")
+            tbl5.auto_set_font_size(False)
+            tbl5.set_fontsize(8.5)
+            for (r, c), cell in tbl5.get_celld().items():
+                if r == 0:
+                    cell.set_facecolor("#45475a")
+                    cell.set_text_props(color="#cba6f7", fontweight="bold")
+                else:
+                    cell.set_facecolor("#313244")
+                    cell.set_text_props(color="#cdd6f4")
+                cell.set_edgecolor("#585b70")
+        pdf.savefig(fig5, facecolor=fig5.get_facecolor())
+        plt.close(fig5)
+
+    buf.seek(0)
+    return buf.getvalue()
+
+
 # ─────────────────────────────────────────────
 #  Streamlit Page Setup
 # ─────────────────────────────────────────────
@@ -1193,7 +1519,7 @@ elif df_raw is not None:
 
         import datetime as _dt
         _ts2 = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-        dl_col1, dl_col2, dl_col3 = st.columns(3)
+        dl_col1, dl_col2, dl_col3, dl_col4 = st.columns(4)
         with dl_col1:
             st.download_button(
                 label="⬇️ Excel Raporu İndir (.xlsx)",
@@ -1223,6 +1549,16 @@ elif df_raw is not None:
                 mime="text/html",
                 use_container_width=True,
                 help="Tüm grafikler ve tablolar dahil tam rapor. Tarayıcıdan PDF olarak da yazdırabilirsin.",
+            )
+        with dl_col4:
+            _pdf_bytes = generate_pdf_report(df_raw, df_norm, pose_data, results)
+            st.download_button(
+                label="📑 PDF Rapor İndir",
+                data=_pdf_bytes,
+                file_name=f"iso9283_rapor_{_ts2}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                help="Bullseye, eksen sapması, box plot, kalite özeti dahil 6 sayfalık PDF raporu",
             )
 
     except Exception as e:
